@@ -78,7 +78,6 @@ import { GetGroupFileSystemInfo } from '@/onebot/action/go-cqhttp/GetGroupFileSy
 import { GetGroupRootFiles } from '@/onebot/action/go-cqhttp/GetGroupRootFiles';
 import { GetGroupFilesByFolder } from '@/onebot/action/go-cqhttp/GetGroupFilesByFolder';
 import { GetGroupSystemMsg } from './system/GetSystemMsg';
-import { GroupPoke } from './group/GroupPoke';
 import { GetUserStatus } from './extends/GetUserStatus';
 import { GetRkey } from './extends/GetRkey';
 import { SetSpecialTitle } from './extends/SetSpecialTitle';
@@ -86,7 +85,6 @@ import { GetGroupShutList } from './group/GetGroupShutList';
 import { GetGroupMemberList } from './group/GetGroupMemberList';
 import { GetGroupFileUrl } from '@/onebot/action/file/GetGroupFileUrl';
 import { GetPacketStatus } from '@/onebot/action/packet/GetPacketStatus';
-import { FriendPoke } from '@/onebot/action/user/FriendPoke';
 import { GetCredentials } from './system/GetCredentials';
 import { SendGroupSign, SetGroupSign } from './extends/SetGroupSign';
 import { GoCQHTTPGetGroupAtAllRemain } from './go-cqhttp/GetGroupAtAllRemain';
@@ -102,7 +100,7 @@ import { GetGuildList } from './guild/GetGuildList';
 import { GetGuildProfile } from './guild/GetGuildProfile';
 import { GetClientkey } from './extends/GetClientkey';
 import { SendPacket } from './extends/SendPacket';
-import { SendPoke } from '@/onebot/action/packet/SendPoke';
+import { FriendPoke, GroupPoke, SendPoke } from '@/onebot/action/packet/SendPoke';
 import { SetDiyOnlineStatus } from './extends/SetDiyOnlineStatus';
 import { BotExit } from './extends/BotExit';
 import { ClickInlineKeyboardButton } from './extends/ClickInlineKeyboardButton';
@@ -118,10 +116,36 @@ import { CleanCache } from './system/CleanCache';
 import SetFriendRemark from './user/SetFriendRemark';
 import { SetDoubtFriendsAddRequest } from './new/SetDoubtFriendsAddRequest';
 import { GetDoubtFriendsAddRequest } from './new/GetDoubtFriendsAddRequest';
+import SetGroupAddOption from './extends/SetGroupAddOption';
+import SetGroupSearch from './extends/SetGroupSearch';
+import SetGroupRobotAddOption from './extends/SetGroupRobotAddOption';
+import SetGroupKickMembers from './extends/SetGroupKickMembers';
+import { GetGroupDetailInfo } from './group/GetGroupDetailInfo';
+import GetGroupAddRequest from './extends/GetGroupAddRequest';
+import { GetCollectionList } from './extends/GetCollectionList';
+import { SetGroupTodo } from './packet/SetGroupTodo';
+import { GetQunAlbumList } from './extends/GetQunAlbumList';
+import { UploadImageToQunAlbum } from './extends/UploadImageToQunAlbum';
+import { DoGroupAlbumComment } from './extends/DoGroupAlbumComment';
+import { GetGroupAlbumMediaList } from './extends/GetGroupAlbumMediaList';
+import { SetGroupAlbumMediaLike } from './extends/SetGroupAlbumMediaLike';
+import { DelGroupAlbumMedia } from './extends/DelGroupAlbumMedia';
 
 export function createActionMap(obContext: NapCatOneBot11Adapter, core: NapCatCore) {
 
     const actionHandlers = [
+        new DelGroupAlbumMedia(obContext, core),
+        new SetGroupAlbumMediaLike(obContext, core),
+        new DoGroupAlbumComment(obContext, core),
+        new GetGroupAlbumMediaList(obContext, core),
+        new GetQunAlbumList(obContext, core),
+        new UploadImageToQunAlbum(obContext, core),
+        new SetGroupTodo(obContext, core),
+        new GetGroupDetailInfo(obContext, core),
+        new SetGroupKickMembers(obContext, core),
+        new SetGroupAddOption(obContext, core),
+        new SetGroupRobotAddOption(obContext, core),
+        new SetGroupSearch(obContext, core),
         new SetDoubtFriendsAddRequest(obContext, core),
         new GetDoubtFriendsAddRequest(obContext, core),
         new SetFriendRemark(obContext, core),
@@ -249,6 +273,8 @@ export function createActionMap(obContext: NapCatOneBot11Adapter, core: NapCatCo
         new GetPrivateFileUrl(obContext, core),
         new GetUnidirectionalFriendList(obContext, core),
         new CleanCache(obContext, core),
+        new GetGroupAddRequest(obContext, core),
+        new GetCollectionList(obContext, core),
     ];
 
     type HandlerUnion = typeof actionHandlers[number];

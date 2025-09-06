@@ -9,15 +9,20 @@ import { deepMerge } from '../utils/object';
 import { themeType } from '../types/theme';
 
 // 限制尝试端口的次数，避免死循环
-
 // 定义配置的类型
 const WebUiConfigSchema = Type.Object({
     host: Type.String({ default: '0.0.0.0' }),
     port: Type.Number({ default: 6099 }),
-    token: Type.String({ default: 'napcat' }),
+    // napcat+<月份日时>，例如 napcat062511
+    token: Type.String({ default: 'napcat' + (new Date().getMonth() + 1).toString().padStart(2, '0') + new Date().getDate().toString().padStart(2, '0') + new Date().getHours().toString().padStart(2, '0') }),
     loginRate: Type.Number({ default: 10 }),
     autoLoginAccount: Type.String({ default: '' }),
     theme: themeType,
+    defaultToken: Type.Boolean({ default: true }),
+    // 是否关闭WebUI
+    disableWebUI: Type.Boolean({ default: false }),
+    // 是否关闭非局域网访问
+    disableNonLANAccess: Type.Boolean({ default: false }),
 });
 
 export type WebUiConfigType = Static<typeof WebUiConfigSchema>;
@@ -88,7 +93,7 @@ export class WebUiConfigWrapper {
         if (currentConfig.token !== oldToken) {
             throw new Error('旧 token 不匹配');
         }
-        await this.UpdateWebUIConfig({ token: newToken });
+        await this.UpdateWebUIConfig({ token: newToken, defaultToken: false });
     }
 
     // 获取日志文件夹路径
@@ -175,5 +180,27 @@ export class WebUiConfigWrapper {
     // 更新主题内容
     async UpdateTheme(theme: WebUiConfigType['theme']): Promise<void> {
         await this.UpdateWebUIConfig({ theme: theme });
+    }
+
+    // 获取是否禁用WebUI
+    async GetDisableWebUI(): Promise<boolean> {
+        const config = await this.GetWebUIConfig();
+        return config.disableWebUI;
+    }
+
+    // 更新是否禁用WebUI
+    async UpdateDisableWebUI(disable: boolean): Promise<void> {
+        await this.UpdateWebUIConfig({ disableWebUI: disable });
+    }
+
+    // 获取是否禁用非局域网访问
+    async GetDisableNonLANAccess(): Promise<boolean> {
+        const config = await this.GetWebUIConfig();
+        return config.disableNonLANAccess;
+    }
+
+    // 更新是否禁用非局域网访问
+    async UpdateDisableNonLANAccess(disable: boolean): Promise<void> {
+        await this.UpdateWebUIConfig({ disableNonLANAccess: disable });
     }
 }

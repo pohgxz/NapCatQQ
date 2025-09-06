@@ -42,8 +42,8 @@ export class NTQQFileApi {
         this.context = context;
         this.core = core;
         this.rkeyManager = new RkeyManager([
-            'https://secret-service.bietiaop.com/rkeys',
             'http://ss.xingzhige.com/music_card/rkey',
+            'https://secret-service.bietiaop.com/rkeys',
         ],
             this.context.logger
         );
@@ -64,13 +64,13 @@ export class NTQQFileApi {
         }
     }
 
-    async getFileUrl(chatType: ChatType, peer: string, fileUUID?: string, file10MMd5?: string | undefined) {
-        if (this.core.apis.PacketApi.available) {
+    async getFileUrl(chatType: ChatType, peer: string, fileUUID?: string, file10MMd5?: string | undefined,timeout: number = 20000) {
+        if (this.core.apis.PacketApi.packetStatus) {
             try {
                 if (chatType === ChatType.KCHATTYPEGROUP && fileUUID) {
-                    return this.core.apis.PacketApi.pkt.operation.GetGroupFileUrl(+peer, fileUUID);
+                    return this.core.apis.PacketApi.pkt.operation.GetGroupFileUrl(+peer, fileUUID, timeout);
                 } else if (file10MMd5 && fileUUID) {
-                    return this.core.apis.PacketApi.pkt.operation.GetPrivateFileUrl(peer, fileUUID, file10MMd5);
+                    return this.core.apis.PacketApi.pkt.operation.GetPrivateFileUrl(peer, fileUUID, file10MMd5, timeout);
                 }
             } catch (error) {
                 this.context.logger.logError('获取文件URL失败', (error as Error).message);
@@ -79,8 +79,8 @@ export class NTQQFileApi {
         throw new Error('fileUUID or file10MMd5 is undefined');
     }
 
-    async getPttUrl(peer: string, fileUUID?: string) {
-        if (this.core.apis.PacketApi.available && fileUUID) {
+    async getPttUrl(peer: string, fileUUID?: string,timeout: number = 20000) {
+        if (this.core.apis.PacketApi.packetStatus && fileUUID) {
             let appid = new NapProtoMsg(FileId).decode(Buffer.from(fileUUID.replaceAll('-', '+').replaceAll('_', '/'), 'base64')).appid;
             try {
                 if (appid && appid === 1403) {
@@ -90,7 +90,7 @@ export class NTQQFileApi {
                         uploadTime: 0,
                         ttl: 0,
                         subType: 0,
-                    });
+                    }, timeout);
                 } else if (fileUUID) {
                     return this.core.apis.PacketApi.pkt.operation.GetPttUrl(peer, {
                         fileUuid: fileUUID,
@@ -98,7 +98,7 @@ export class NTQQFileApi {
                         uploadTime: 0,
                         ttl: 0,
                         subType: 0,
-                    });
+                    }, timeout);
                 }
             } catch (error) {
                 this.context.logger.logError('获取文件URL失败', (error as Error).message);
@@ -107,8 +107,8 @@ export class NTQQFileApi {
         throw new Error('packet cant get ptt url');
     }
 
-    async getVideoUrlPacket(peer: string, fileUUID?: string) {
-        if (this.core.apis.PacketApi.available && fileUUID) {
+    async getVideoUrlPacket(peer: string, fileUUID?: string,timeout: number = 20000) {
+        if (this.core.apis.PacketApi.packetStatus && fileUUID) {
             let appid = new NapProtoMsg(FileId).decode(Buffer.from(fileUUID.replaceAll('-', '+').replaceAll('_', '/'), 'base64')).appid;
             try {
                 if (appid && appid === 1415) {
@@ -118,7 +118,7 @@ export class NTQQFileApi {
                         uploadTime: 0,
                         ttl: 0,
                         subType: 0,
-                    });
+                    }, timeout);
                 } else if (fileUUID) {
                     return this.core.apis.PacketApi.pkt.operation.GetVideoUrl(peer, {
                         fileUuid: fileUUID,
@@ -126,7 +126,7 @@ export class NTQQFileApi {
                         uploadTime: 0,
                         ttl: 0,
                         subType: 0,
-                    });
+                    }, timeout);
                 }
             } catch (error) {
                 this.context.logger.logError('获取文件URL失败', (error as Error).message);
@@ -260,22 +260,21 @@ export class NTQQFileApi {
         const thumbDir = path.replace(`${pathLib.sep}Ori${pathLib.sep}`, `${pathLib.sep}Thumb${pathLib.sep}`);
         fs.mkdirSync(pathLib.dirname(thumbDir), { recursive: true });
         const thumbPath = pathLib.join(pathLib.dirname(thumbDir), `${md5}_0.png`);
+        try {
+            videoInfo = await FFmpegService.getVideoInfo(filePath, thumbPath);
+            if (!fs.existsSync(thumbPath)) {
+                this.context.logger.logError('获取视频缩略图失败', new Error('缩略图不存在'));
+                throw new Error('获取视频缩略图失败');
+            }
+        } catch (e) {
+            this.context.logger.logError('获取视频信息失败', e);
+            fs.writeFileSync(thumbPath, Buffer.from(defaultVideoThumbB64, 'base64'));
+        }
         if (_diyThumbPath) {
             try {
                 await this.copyFile(_diyThumbPath, thumbPath);
             } catch (e) {
                 this.context.logger.logError('复制自定义缩略图失败', e);
-            }
-        } else {
-            try {
-                videoInfo = await FFmpegService.getVideoInfo(filePath, thumbPath);
-                if (!fs.existsSync(thumbPath)) {
-                    this.context.logger.logError('获取视频缩略图失败', new Error('缩略图不存在'));
-                    throw new Error('获取视频缩略图失败');
-                }
-            } catch (e) {
-                this.context.logger.logError('获取视频信息失败', e);
-                fs.writeFileSync(thumbPath, Buffer.from(defaultVideoThumbB64, 'base64'));
             }
         }
         context.deleteAfterSentFiles.push(thumbPath);
@@ -502,7 +501,7 @@ export class NTQQFileApi {
         };
 
         try {
-            if (this.core.apis.PacketApi.available) {
+            if (this.core.apis.PacketApi.packetStatus) {
                 const rkey_expired_private = !this.packetRkey || (this.packetRkey[0] && this.packetRkey[0].time + Number(this.packetRkey[0].ttl) < Date.now() / 1000);
                 const rkey_expired_group = !this.packetRkey || (this.packetRkey[0] && this.packetRkey[0].time + Number(this.packetRkey[0].ttl) < Date.now() / 1000);
                 if (rkey_expired_private || rkey_expired_group) {

@@ -61,7 +61,15 @@ async function checkCertificates(logger: LogWrapper): Promise<{ key: string, cer
 export async function InitWebUi(logger: LogWrapper, pathWrapper: NapCatPathWrapper) {
     webUiPathWrapper = pathWrapper;
     WebUiConfig = new WebUiConfigWrapper();
-    const [host, port, token] = await InitPort(await WebUiConfig.GetWebUIConfig());
+    const config = await WebUiConfig.GetWebUIConfig();
+    
+    // 检查是否禁用WebUI
+    if (config.disableWebUI) {
+        logger.log('[NapCat] [WebUi] WebUI is disabled by configuration.');
+        return;
+    }
+    
+    const [host, port, token] = await InitPort(config);
     webUiRuntimePort = port;
     if (port == 0) {
         logger.log('[NapCat] [WebUi] Current WebUi is not run.');
@@ -163,14 +171,11 @@ export async function InitWebUi(logger: LogWrapper, pathWrapper: NapCatPathWrapp
     server.listen(port, host, async () => {
         // 启动后打印出相关地址
         let searchParams = { token: token };
-        if (host !== '' && host !== '0.0.0.0') {
+        if (host !== '') {
             logger.log(
                 `[NapCat] [WebUi] WebUi User Panel Url: ${createUrl(host, port.toString(), '/webui', searchParams)}`
             );
         }
-        logger.log(
-            `[NapCat] [WebUi] WebUi Local Panel Url: ${createUrl('127.0.0.1', port.toString(), '/webui', searchParams)}`
-        );
     });
     // ------------Over！------------
 }

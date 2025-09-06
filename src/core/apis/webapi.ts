@@ -8,10 +8,11 @@ import {
     WebHonorType,
 } from '@/core';
 import { NapCatCore } from '..';
-import { readFileSync } from 'node:fs';
+import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
-
+import { qunAlbumControl } from '../data/webapi';
+import { createAlbumCommentRequest, createAlbumFeedPublish, createAlbumMediaFeed } from '../data/album';
 export class NTQQWebApi {
     context: InstanceContext;
     core: NapCatCore;
@@ -264,7 +265,7 @@ export class NTQQWebApi {
     async getGroupHonorInfo(groupCode: string, getType: WebHonorType) {
         const cookieObject = await this.core.apis.UserApi.getCookies('qun.qq.com');
         let HonorInfo = {
-            group_id: groupCode,
+            group_id: Number(groupCode),
             current_talkative: {},
             talkative_list: [],
             performer_list: [],
@@ -323,64 +324,193 @@ export class NTQQWebApi {
         }
         return (hash & 0x7FFFFFFF).toString();
     }
-    async createQunAlbumSession(gc: string, sAlbumID: string, sAlbumName: string, path: string, skey: string, pskey: string, uin: string) {
+    async getAlbumListByNTQQ(gc: string) {
+        return await this.context.session.getAlbumService().getAlbumList({
+            qun_id: gc,
+            attach_info: '',
+            seq: 3331,
+            request_time_line: {
+                request_invoke_time: "0"
+            }
+        })
+    }
+    async getAlbumList(gc: string) {
+        const skey = await this.core.apis.UserApi.getSKey() || '';
+        const pskey = (await this.core.apis.UserApi.getPSkey(['qzone.qq.com'])).domainPskeyMap.get('qzone.qq.com') || '';
+        const bkn = this.getBknFromSKey(skey);
+        const uin = this.core.selfInfo.uin || '10001';
+        const cookies = `p_uin=o${this.core.selfInfo.uin}; p_skey=${pskey}; skey=${skey}; uin=o${uin} `;
+        const api = `https://h5.qzone.qq.com/proxy/domain/u.photo.qzone.qq.com/cgi-bin/upp/qun_list_album_v2?`;
+        const params = new URLSearchParams({
+            random: '7570',
+            g_tk: bkn,
+            format: 'json',
+            inCharset: 'utf-8',
+            outCharset: 'utf-8',
+            qua: 'V1_IPH_SQ_6.2.0_0_HDBM_T',
+            cmd: 'qunGetAlbumList',
+            qunId: gc,
+            qunid: gc,
+            start: '0',
+            num: '1000',
+            uin: uin,
+            getMemberRole: '0'
+        });
+        const response = await RequestUtil.HttpGetJson<{ data: { album: Array<{ id: string, title: string }> } }>(api + params.toString(), 'GET', '', {
+            'Cookie': cookies
+        });
+        return response.data.album;
+    }
+
+    async createQunAlbumSession(gc: string, sAlbumID: string, sAlbumName: string, path: string, skey: string, pskey: string, img_md5: string, uin: string) {
         const img = readFileSync(path);
-        const img_md5 = createHash('md5').update(img).digest('hex');
         const img_size = img.length;
         const img_name = basename(path);
-        const time = Math.floor(Date.now() / 1000);
-        const GTK = this.getBknFromSKey(pskey);
-        const cookie = `p_uin=${uin}; p_skey=${pskey}; skey=${skey}; uin=${uin}`;
-        const body = {
-            control_req: [{
-                uin: uin,
-                token: {
-                    type: 4,
-                    data: pskey,
-                    appid: 5
-                },
-                appid: 'qun',
-                checksum: img_md5,
-                check_type: 0,
-                file_len: img_size,
-                env: {
-                    refer: 'qzone',
-                    deviceInfo: 'h5'
-                },
-                model: 0,
-                biz_req: {
-                    sPicTitle: img_name,
-                    sPicDesc: '',
-                    sAlbumName: sAlbumName,
-                    sAlbumID: sAlbumID,
-                    iAlbumTypeID: 0,
-                    iBitmap: 0,
-                    iUploadType: 0,
-                    iUpPicType: 0,
-                    iBatchID: time,
-                    sPicPath: '',
-                    iPicWidth: 0,
-                    iPicHight: 0,
-                    iWaterType: 0,
-                    iDistinctUse: 0,
-                    iNeedFeeds: 1,
-                    iUploadTime: time,
-                    mapExt: {
-                        appid: 'qun',
-                        userid: gc
-                    }
-                },
-                session: '',
-                asy_upload: 0,
-                cmd: 'FileUpload'
-            }]
-        };
+        const GTK = this.getBknFromSKey(skey);
+        const cookie = `p_uin=o${uin}; p_skey=${pskey}; skey=${skey}; uin=o${uin}`;
+        const body = qunAlbumControl({
+            uin,
+            group_id: gc,
+            pskey,
+            pic_md5: img_md5,
+            img_size,
+            img_name,
+            sAlbumName: sAlbumName,
+            sAlbumID: sAlbumID
+        });
         const api = `https://h5.qzone.qq.com/webapp/json/sliceUpload/FileBatchControl/${img_md5}?g_tk=${GTK}`;
-        const post = await RequestUtil.HttpGetJson(api, 'POST', body, {
+        const post = await RequestUtil.HttpGetJson<{ data: { session: string }, ret: number, msg: string }>(api, 'POST', body, {
             'Cookie': cookie,
             'Content-Type': 'application/json'
         });
-
         return post;
+    }
+
+    async uploadQunAlbumSlice(path: string, session: string, skey: string, pskey: string, uin: string, slice_size: number) {
+        const img_size = statSync(path).size;
+        let seq = 0;
+        let offset = 0;
+        const GTK = this.getBknFromSKey(skey);
+        const cookie = `p_uin=o${uin}; p_skey=${pskey}; skey=${skey}; uin=o${uin}`;
+
+        const stream = createReadStream(path, { highWaterMark: slice_size });
+
+        for await (const chunk of stream) {
+            const end = Math.min(offset + chunk.length, img_size);
+            const form = new FormData();
+            form.append('uin', uin);
+            form.append('appid', 'qun');
+            form.append('session', session);
+            form.append('offset', offset.toString());
+            form.append('data', new Blob([chunk], { type: 'application/octet-stream' }), 'blob');
+            form.append('checksum', '');
+            form.append('check_type', '0');
+            form.append('retry', '0');
+            form.append('seq', seq.toString());
+            form.append('end', end.toString());
+            form.append('cmd', 'FileUpload');
+            form.append('slice_size', slice_size.toString());
+            form.append('biz_req.iUploadType', '0');
+
+            const api = `https://h5.qzone.qq.com/webapp/json/sliceUpload/FileUpload?seq=${seq}&retry=0&offset=${offset}&end=${end}&total=${img_size}&type=form&g_tk=${GTK}`;
+            const response = await fetch(api, {
+                method: 'POST',
+                headers: {
+                    'Cookie': cookie,
+                },
+                body: form
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const post = await response.json() as { ret: number, msg: string }; if (post.ret !== 0) {
+                throw new Error(`分片 ${seq} 上传失败: ${post.msg}`);
+            }
+            offset += chunk.length;
+            seq++;
+        }
+
+        return { success: true, message: '上传完成' };
+    }
+
+    async uploadImageToQunAlbum(gc: string, sAlbumID: string, sAlbumName: string, path: string) {
+        const skey = await this.core.apis.UserApi.getSKey() || '';
+        const pskey = (await this.core.apis.UserApi.getPSkey(['qzone.qq.com'])).domainPskeyMap.get('qzone.qq.com') || '';
+        const img_md5 = createHash('md5').update(readFileSync(path)).digest('hex');
+        const uin = this.core.selfInfo.uin || '10001';
+        const session = (await this.createQunAlbumSession(gc, sAlbumID, sAlbumName, path, skey, pskey, img_md5, uin)).data.session;
+        if (!session) throw new Error('创建群相册会话失败');
+        await this.uploadQunAlbumSlice(path, session, skey, pskey, uin, 16384);
+    }
+    async getAlbumMediaListByNTQQ(gc: string, albumId: string, attach_info: string = '') {
+        return (await this.context.session.getAlbumService().getMediaList({
+            qun_id: gc,
+            attach_info: attach_info,
+            seq: 0,
+            request_time_line: {
+                request_invoke_time: "0"
+            },
+            album_id: albumId,
+            lloc: '',
+            batch_id: ''
+        })).response;
+    }
+
+    async doAlbumMediaPlainCommentByNTQQ(
+        qunId: string,
+        albumId: string,
+        lloc: string,
+        content: string) {
+        const random_seq = Math.floor(Math.random() * 9000) + 1000;
+        const uin = this.core.selfInfo.uin || '10001';
+        //16位number数字
+        const client_key = Date.now() * 1000
+        return await this.context.session.getAlbumService().doQunComment(
+            random_seq, {
+            map_info: [],
+            map_bytes_info: [],
+            map_user_account: []
+        },
+            qunId,
+            2,
+            createAlbumMediaFeed(uin, albumId, lloc),
+            createAlbumCommentRequest(uin, content, client_key)
+        );
+    }
+
+    async deleteAlbumMediaByNTQQ(
+        qunId: string,
+        albumId: string,
+        lloc: string) {
+        const random_seq = Math.floor(Math.random() * 9000) + 1000;
+        return await this.context.session.getAlbumService().deleteMedias(
+            random_seq,
+            qunId,
+            albumId,
+            [lloc],
+            []
+        );
+    }
+
+    async doAlbumMediaLikeByNTQQ(
+        qunId: string,
+        albumId: string,
+        lloc: string,
+        id: string) {
+        const random_seq = Math.floor(Math.random() * 9000) + 1000;
+        const uin = this.core.selfInfo.uin || '10001';
+        return await this.context.session.getAlbumService().doQunLike(
+            random_seq, {
+            map_info: [],
+            map_bytes_info: [],
+            map_user_account: []
+        }, {
+            id: id,
+            status: 1
+        },
+            createAlbumFeedPublish(qunId, uin, albumId, lloc)
+        )
     }
 }

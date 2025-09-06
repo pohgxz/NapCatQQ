@@ -9,17 +9,23 @@ export class NapCatPathWrapper {
     configPath: string;
     cachePath: string;
     staticPath: string;
+    pluginPath: string;
 
     constructor(mainPath: string = dirname(fileURLToPath(import.meta.url))) {
         this.binaryPath = mainPath;
         let writePath: string;
-        if (os.platform() === 'darwin') {
+
+        if (process.env['NAPCAT_WORKDIR']) {
+            writePath = process.env['NAPCAT_WORKDIR'];
+        } else if (os.platform() === 'darwin') {
             writePath = path.join(os.homedir(), 'Library', 'Application Support', 'QQ', 'NapCat');
         } else {
             writePath = this.binaryPath;
         }
+
         this.logsPath = path.join(writePath, 'logs');
         this.configPath = path.join(writePath, 'config');
+        this.pluginPath = path.join(writePath, 'plugins');//dynamic load
         this.cachePath = path.join(writePath, 'cache');
         this.staticPath = path.join(this.binaryPath, 'static');
         if (!fs.existsSync(this.logsPath)) {

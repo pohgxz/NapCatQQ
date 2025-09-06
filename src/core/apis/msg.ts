@@ -142,7 +142,6 @@ export class NTQQMsgApi {
     }
 
     async queryFirstMsgBySender(peer: Peer, SendersUid: string[]) {
-        console.log(peer, SendersUid);
         return await this.context.session.getMsgService().queryMsgsWithFilterEx('0', '0', '0', {
             chatInfo: peer,
             filterMsgType: [],
@@ -192,7 +191,7 @@ export class NTQQMsgApi {
     }
 
     async recallMsg(peer: Peer, msgId: string) {
-        await this.core.eventWrapper.callNormalEventV2(
+        return await this.core.eventWrapper.callNormalEventV2(
             'NodeIKernelMsgService/recallMsg',
             'NodeIKernelMsgListener/onMsgInfoListUpdate',
             [peer, [msgId]],

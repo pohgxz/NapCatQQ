@@ -10,6 +10,17 @@ export interface InvalidCheckResult {
 }
 
 export const ActionName = {
+    DelGroupAlbumMedia: 'del_group_album_media',
+    SetGroupAlbumMediaLike: 'set_group_album_media_like',
+    DoGroupAlbumComment: 'do_group_album_comment',
+    GetGroupAlbumMediaList: 'get_group_album_media_list',
+    UploadImageToQunAlbum: 'upload_image_to_qun_album',
+    GetQunAlbumList: 'get_qun_album_list',
+    SetGroupTodo: 'set_group_todo',
+    SetGroupKickMembers: 'set_group_kick_members',
+    SetGroupRobotAddOption: 'set_group_robot_add_option',
+    SetGroupAddOption: 'set_group_add_option',
+    SetGroupSearch: 'set_group_search',
     // new extends 完全差异OneBot类别
     GetDoubtFriendsAddRequest: 'get_doubt_friends_add_request',
     SetDoubtFriendsAddRequest: 'set_doubt_friends_add_request',
@@ -59,7 +70,7 @@ export const ActionName = {
     GetStatus: 'get_status',
     GetVersionInfo: 'get_version_info',
     // Reboot : 'set_restart',
-    CleanCache : 'clean_cache',
+    CleanCache: 'clean_cache',
     Exit: 'bot_exit',
     // go-cqhttp
     SetQQProfile: 'set_qq_profile',
@@ -128,6 +139,7 @@ export const ActionName = {
     FetchEmojiLike: 'fetch_emoji_like',
     SetInputStatus: 'set_input_status',
     GetGroupInfoEx: 'get_group_info_ex',
+    GetGroupDetailInfo: 'get_group_detail_info',
     GetGroupIgnoreAddRequest: 'get_group_ignore_add_request',
     DelGroupNotice: '_del_group_notice',
     FriendPoke: 'friend_poke',

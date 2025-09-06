@@ -19,6 +19,7 @@ import { rawMsgWithSendMsg } from '@/core/packet/message/converter';
 export interface ReturnDataType {
     message_id: number;
     res_id?: string;
+    forward_id?: string;
 }
 
 export enum ContextMode {
@@ -104,8 +105,6 @@ function getSpecialMsgNum(payload: OB11PostSendMsg, msgType: OB11MessageDataType
 }
 
 export class SendMsgBase extends OneBotAction<OB11PostSendMsg, ReturnDataType> {
-    contextMode = ContextMode.Normal;
-
     protected override async check(payload: OB11PostSendMsg): Promise<BaseCheckResult> {
         const messages = normalize(payload.message);
         const nodeElementLength = getSpecialMsgNum(payload, OB11MessageDataType.node);
@@ -117,12 +116,13 @@ export class SendMsgBase extends OneBotAction<OB11PostSendMsg, ReturnDataType> {
         }
         return { valid: true };
     }
-
     async _handle(payload: OB11PostSendMsg): Promise<ReturnDataType> {
-        this.contextMode = ContextMode.Normal;
-        if (payload.message_type === 'group') this.contextMode = ContextMode.Group;
-        if (payload.message_type === 'private') this.contextMode = ContextMode.Private;
-        const peer = await createContext(this.core, payload, this.contextMode);
+        return this.base_handle(payload);
+    }
+    async base_handle(payload: OB11PostSendMsg, contextMode: ContextMode = ContextMode.Normal): Promise<ReturnDataType> {
+        if (payload.message_type === 'group') contextMode = ContextMode.Group;
+        if (payload.message_type === 'private') contextMode = ContextMode.Private;
+        const peer = await createContext(this.core, payload, contextMode);
 
         const messages = normalize(
             payload.message,
@@ -130,7 +130,7 @@ export class SendMsgBase extends OneBotAction<OB11PostSendMsg, ReturnDataType> {
         );
 
         if (getSpecialMsgNum(payload, OB11MessageDataType.node)) {
-            const packetMode = this.core.apis.PacketApi.available;
+            const packetMode = this.core.apis.PacketApi.packetStatus;
             let returnMsgAndResId: { message: RawMessage | null, res_id?: string } | null;
             try {
                 returnMsgAndResId = packetMode
@@ -148,7 +148,10 @@ export class SendMsgBase extends OneBotAction<OB11PostSendMsg, ReturnDataType> {
                     peerUid: peer.peerUid,
                     chatType: peer.chatType,
                 }, (returnMsgAndResId.message).msgId);
-                return { message_id: msgShortId!, res_id: returnMsgAndResId.res_id! };
+
+                // 对gocq的forward_id进行兼容
+                const resId = returnMsgAndResId.res_id!;
+                return { message_id: msgShortId!, res_id: resId, forward_id: resId };
             } else if (returnMsgAndResId.res_id && !returnMsgAndResId.message) {
                 throw Error(`发送转发消息（res_id：${returnMsgAndResId.res_id} 失败`);
             }

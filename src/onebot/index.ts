@@ -40,7 +40,6 @@ import { OB11FriendRequestEvent } from '@/onebot/event/request/OB11FriendRequest
 import { OB11GroupRequestEvent } from '@/onebot/event/request/OB11GroupRequest';
 import { OB11FriendRecallNoticeEvent } from '@/onebot/event/notice/OB11FriendRecallNoticeEvent';
 import { OB11GroupRecallNoticeEvent } from '@/onebot/event/notice/OB11GroupRecallNoticeEvent';
-import { LRUCache } from '@/common/lru-cache';
 import { BotOfflineEvent } from './event/notice/BotOfflineEvent';
 import {
     NetworkAdapterConfig,
@@ -50,6 +49,8 @@ import {
 import { OB11Message } from './types';
 import { IOB11NetworkAdapter } from '@/onebot/network/adapter';
 import { OB11HttpSSEServerAdapter } from './network/http-server-sse';
+import { OB11PluginMangerAdapter } from './network/plugin-manger';
+import { existsSync } from 'node:fs';
 
 //OneBot实现类
 export class NapCatOneBot11Adapter {
@@ -61,8 +62,7 @@ export class NapCatOneBot11Adapter {
     networkManager: OB11NetworkManager;
     actions: ActionMap;
     private readonly bootTime = Date.now() / 1000;
-    recallMsgCache = new LRUCache<string, RawMessage>(100);
-
+    recallEventCache = new Map<string, any>();
     constructor(core: NapCatCore, context: InstanceContext, pathWrapper: NapCatPathWrapper) {
         this.core = core;
         this.context = context;
@@ -116,6 +116,12 @@ export class NapCatOneBot11Adapter {
         // this.networkManager.registerAdapter(
         //     new OB11PluginAdapter('myPlugin', this.core, this,this.actions)
         // );
+        if (existsSync(this.context.pathWrapper.pluginPath)) {
+            this.context.logger.log(`[Plugins] 插件目录存在，开始加载插件`);
+            this.networkManager.registerAdapter(
+                new OB11PluginMangerAdapter('plugin_manager', this.core, this, this.actions)
+            );
+        }
         for (const key of ob11Config.network.httpServers) {
             if (key.enable) {
                 this.networkManager.registerAdapter(
@@ -169,7 +175,7 @@ export class NapCatOneBot11Adapter {
         this.initBuddyListener();
         this.initGroupListener();
 
-        WebUiDataRuntime.setQQVersion(this.core.context.basicInfoWrapper.getFullQQVesion());
+        WebUiDataRuntime.setQQVersion(this.core.context.basicInfoWrapper.getFullQQVersion());
         WebUiDataRuntime.setQQLoginInfo(selfInfo);
         WebUiDataRuntime.setQQLoginStatus(true);
         WebUiDataRuntime.setOnOB11ConfigChanged(async (newConfig) => {
@@ -270,7 +276,6 @@ export class NapCatOneBot11Adapter {
                 );
             }
         };
-
         msgListener.onAddSendMsg = async (msg) => {
             try {
                 if (msg.sendStatus == SendStatusType.KSEND_STATUS_SENDING) {
@@ -282,7 +287,8 @@ export class NapCatOneBot11Adapter {
                     }, 1, 10 * 60 * 1000);
                     // 10分钟 超时
                     const updatemsg = updatemsgs.find((e) => e.msgId === msg.msgId);
-                    if (updatemsg?.sendStatus == SendStatusType.KSEND_STATUS_SUCCESS || updatemsg?.sendStatus == SendStatusType.KSEND_STATUS_SUCCESS_NOSEQ) {
+                    // updatemsg?.sendStatus == SendStatusType.KSEND_STATUS_SUCCESS_NOSEQ NOSEQ一般是服务器未下发SEQ 这意味着这条消息不应该推送network
+                    if (updatemsg?.sendStatus == SendStatusType.KSEND_STATUS_SUCCESS) {
                         updatemsg.id = MessageUnique.createUniqueMsgId(
                             {
                                 chatType: updatemsg.chatType,
@@ -304,8 +310,21 @@ export class NapCatOneBot11Adapter {
                 peerUid: uid,
                 guildId: ''
             };
-            const msg = (await this.core.apis.MsgApi.queryMsgsWithFilterExWithSeq(peer, msgSeq)).msgList.find(e => e.msgType == NTMsgType.KMSGTYPEGRAYTIPS);
+            let msg = (await this.core.apis.MsgApi.queryMsgsWithFilterExWithSeq(peer, msgSeq)).msgList.find(e => e.msgType == NTMsgType.KMSGTYPEGRAYTIPS);
             const element = msg?.elements.find(e => !!e.grayTipElement?.revokeElement);
+            if (msg && element?.grayTipElement?.revokeElement.isSelfOperate) {
+                const isSelfDevice = this.recallEventCache.has(msg.msgId);
+                if (isSelfDevice) {
+                    await this.core.eventWrapper.registerListen('NodeIKernelMsgListener/onMsgRecall',
+                        (chatType: ChatType, uid: string, msgSeq: string) => {
+                            return chatType === msg?.chatType && uid === msg?.peerUid && msgSeq === msg?.msgSeq;
+                        }
+                    ).catch(() => {
+                        msg = undefined;
+                        this.context.logger.logDebug('自操作消息撤回事件');
+                    });
+                }
+            }
             if (msg && element) {
                 const recallEvent = await this.emitRecallMsg(msg, element);
                 try {
@@ -316,6 +335,7 @@ export class NapCatOneBot11Adapter {
                     this.context.logger.logError('处理消息撤回失败', e);
                 }
             }
+
         };
         msgListener.onKickedOffLine = async (kick) => {
             const event = new BotOfflineEvent(this.core, kick.tipsTitle, kick.tipsDesc);

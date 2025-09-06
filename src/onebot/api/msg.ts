@@ -46,6 +46,7 @@ import { GroupChange, GroupChangeInfo, GroupInvite, PushMsgBody } from '@/core/p
 import { OB11GroupRequestEvent } from '../event/request/OB11GroupRequest';
 import { LRUCache } from '@/common/lru-cache';
 import { cleanTaskQueue } from '@/common/clean-task';
+import { registerResource } from '@/common/health';
 
 type RawToOb11Converters = {
     [Key in keyof MessageElement as Key extends `${string}Element` ? Key : never]: (
@@ -69,7 +70,9 @@ export type SendMessageContext = {
 }
 
 export type RecvMessageContext = {
-    parseMultMsg: boolean
+    parseMultMsg: boolean,
+    disableGetUrl: boolean,
+    quick_reply: boolean
 }
 
 function keyCanBeParsed(key: string, parser: RawToOb11Converters): key is keyof RawToOb11Converters {
@@ -109,7 +112,7 @@ export class OneBotMsgApi {
             }
         },
 
-        picElement: async (element, msg, elementWrapper) => {
+        picElement: async (element, msg, elementWrapper, { disableGetUrl }) => {
             try {
                 const peer = {
                     chatType: msg.chatType,
@@ -129,7 +132,7 @@ export class OneBotMsgApi {
                         summary: element.summary,
                         file: element.fileName,
                         sub_type: element.picSubType,
-                        url: await this.core.apis.FileApi.getImageUrl(element),
+                        url: disableGetUrl ? (element.filePath ?? '') : await this.core.apis.FileApi.getImageUrl(element),
                         file_size: element.fileSize,
                     },
                 };
@@ -139,7 +142,7 @@ export class OneBotMsgApi {
             }
         },
 
-        fileElement: async (element, msg, elementWrapper) => {
+        fileElement: async (element, msg, elementWrapper, { disableGetUrl }) => {
             const peer = {
                 chatType: msg.chatType,
                 peerUid: msg.peerUid,
@@ -147,10 +150,24 @@ export class OneBotMsgApi {
             };
             FileNapCatOneBotUUID.encode(peer, msg.msgId, elementWrapper.elementId, element.fileUuid, element.fileUuid);
             FileNapCatOneBotUUID.encode(peer, msg.msgId, elementWrapper.elementId, element.fileUuid, element.fileName);
-            if (this.core.apis.PacketApi.available) {
+            if (this.core.apis.PacketApi.packetStatus && !disableGetUrl) {
                 let url;
                 try {
-                    url = await this.core.apis.FileApi.getFileUrl(msg.chatType, msg.peerUid, element.fileUuid, element.file10MMd5)
+                    //url = await this.core.apis.FileApi.getFileUrl(msg.chatType, msg.peerUid, element.fileUuid, element.file10MMd5, 1500)
+                    url = await registerResource(
+                        'file-url-get',
+                        {
+                            resourceFn: async () => {
+                                return await this.core.apis.FileApi.getFileUrl(msg.chatType, msg.peerUid, element.fileUuid, element.file10MMd5, 1500);
+                            },
+                            healthCheckFn: async () => {
+                                return await this.core.apis.PacketApi.pkt.operation.FetchRkey().then(() => true).catch(() => false);
+                            },
+                            testArgs: [],
+                            healthCheckInterval: 30000,
+                            maxHealthCheckFailures: 3
+                        },
+                    );
                 } catch (error) {
                     url = '';
                 }
@@ -240,7 +257,7 @@ export class OneBotMsgApi {
             };
         },
 
-        replyElement: async (element, msg) => {
+        replyElement: async (element, msg, _, quick_reply) => {
             const peer = {
                 chatType: msg.chatType,
                 peerUid: msg.peerUid,
@@ -277,7 +294,10 @@ export class OneBotMsgApi {
                             : replyMsgList.find(msg => msg.msgSeq === msgSeq);
 
                         if (replyMsg) return replyMsg;
-
+                        if (quick_reply) {
+                            this.core.context.logger.logWarn(`快速回复，跳过方法1查询，序号: ${msgSeq}, 消息数: ${replyMsgList.length}`);
+                            return undefined;
+                        }
                         this.core.context.logger.logWarn(`方法1查询失败，序号: ${msgSeq}, 消息数: ${replyMsgList.length}`);
                     }
 
@@ -345,7 +365,7 @@ export class OneBotMsgApi {
 
             return null;
         },
-        videoElement: async (element, msg, elementWrapper) => {
+        videoElement: async (element, msg, elementWrapper, { disableGetUrl }) => {
             const peer = {
                 chatType: msg.chatType,
                 peerUid: msg.peerUid,
@@ -390,10 +410,24 @@ export class OneBotMsgApi {
             }
 
             //开始兜底
-            if (!videoDownUrl) {
-                if (this.core.apis.PacketApi.available) {
+            if (!videoDownUrl && !disableGetUrl) {
+                if (this.core.apis.PacketApi.packetStatus) {
                     try {
-                        videoDownUrl = await this.core.apis.FileApi.getVideoUrlPacket(msg.peerUid, element.fileUuid);
+                        //videoDownUrl = await this.core.apis.FileApi.getVideoUrlPacket(msg.peerUid, element.fileUuid, 1500);
+                        videoDownUrl = await registerResource(
+                            'video-url-get',
+                            {
+                                resourceFn: async () => {
+                                    return await this.core.apis.FileApi.getVideoUrlPacket(msg.peerUid, element.fileUuid, 1500);
+                                },
+                                healthCheckFn: async () => {
+                                    return await this.core.apis.PacketApi.pkt.operation.FetchRkey().then(() => true).catch(() => false);
+                                },
+                                testArgs: [],
+                                healthCheckInterval: 30000,
+                                maxHealthCheckFailures: 3
+                            },
+                        );
                     } catch (e) {
                         this.core.context.logger.logError('获取视频url失败', (e as Error).stack);
                         videoDownUrl = element.filePath;
@@ -414,7 +448,7 @@ export class OneBotMsgApi {
             };
         },
 
-        pttElement: async (element, msg, elementWrapper) => {
+        pttElement: async (element, msg, elementWrapper, { disableGetUrl }) => {
             const peer = {
                 chatType: msg.chatType,
                 peerUid: msg.peerUid,
@@ -422,9 +456,23 @@ export class OneBotMsgApi {
             };
             const fileCode = FileNapCatOneBotUUID.encode(peer, msg.msgId, elementWrapper.elementId, '', element.fileName);
             let pttUrl = '';
-            if (this.core.apis.PacketApi.available) {
+            if (this.core.apis.PacketApi.packetStatus && !disableGetUrl) {
                 try {
-                    pttUrl = await this.core.apis.FileApi.getPttUrl(msg.peerUid, element.fileUuid);
+                    pttUrl = await registerResource(
+                        'ptt-url-get',
+                        {
+                            resourceFn: async () => {
+                                return await this.core.apis.FileApi.getPttUrl(msg.peerUid, element.fileUuid, 1500);
+                            },
+                            healthCheckFn: async () => {
+                                return await this.core.apis.PacketApi.pkt.operation.FetchRkey().then(() => true).catch(() => false);
+                            },
+                            testArgs: [],
+                            healthCheckInterval: 30000,
+                            maxHealthCheckFailures: 3
+                        },
+                    );
+                    //pttUrl = await this.core.apis.FileApi.getPttUrl(msg.peerUid, element.fileUuid, 1500);
                 } catch (e) {
                     this.core.context.logger.logError('获取语音url失败', (e as Error).stack);
                     pttUrl = element.filePath;
@@ -908,17 +956,21 @@ export class OneBotMsgApi {
     async parseMessage(
         msg: RawMessage,
         messagePostFormat: string,
-        parseMultMsg: boolean = true
+        parseMultMsg: boolean = true,
+        disableGetUrl: boolean = false,
+        quick_reply: boolean = false
     ) {
         if (messagePostFormat === 'string') {
-            return (await this.parseMessageV2(msg, parseMultMsg))?.stringMsg;
+            return (await this.parseMessageV2(msg, parseMultMsg, disableGetUrl, quick_reply))?.stringMsg;
         }
-        return (await this.parseMessageV2(msg, parseMultMsg))?.arrayMsg;
+        return (await this.parseMessageV2(msg, parseMultMsg, disableGetUrl, quick_reply))?.arrayMsg;
     }
 
     async parseMessageV2(
         msg: RawMessage,
-        parseMultMsg: boolean = true
+        parseMultMsg: boolean = true,
+        disableGetUrl: boolean = false,
+        quick_reply: boolean = false
     ) {
         if (msg.senderUin == '0' || msg.senderUin == '') return;
         if (msg.peerUin == '0' || msg.peerUin == '') return;
@@ -939,7 +991,7 @@ export class OneBotMsgApi {
             return undefined;
         }
 
-        const validSegments = await this.parseMessageSegments(msg, parseMultMsg);
+        const validSegments = await this.parseMessageSegments(msg, parseMultMsg, disableGetUrl, quick_reply);
         resMsg.message = validSegments;
         resMsg.raw_message = validSegments.map(msg => encodeCQCode(msg)).join('').trim();
 
@@ -974,6 +1026,7 @@ export class OneBotMsgApi {
     private async handleGroupMessage(resMsg: OB11Message, msg: RawMessage) {
         resMsg.sub_type = 'normal';
         resMsg.group_id = parseInt(msg.peerUin);
+        resMsg.group_name = msg.peerName;
         let member = await this.core.apis.GroupApi.getGroupMember(msg.peerUin, msg.senderUin);
         if (!member) member = await this.core.apis.GroupApi.getGroupMember(msg.peerUin, msg.senderUin);
         if (member) {
@@ -1009,7 +1062,7 @@ export class OneBotMsgApi {
         }
     }
 
-    private async parseMessageSegments(msg: RawMessage, parseMultMsg: boolean): Promise<OB11MessageData[]> {
+    private async parseMessageSegments(msg: RawMessage, parseMultMsg: boolean, disableGetUrl: boolean = false, quick_reply: boolean = false): Promise<OB11MessageData[]> {
         const msgSegments = await Promise.allSettled(msg.elements.map(
             async (element) => {
                 for (const key in element) {
@@ -1024,7 +1077,7 @@ export class OneBotMsgApi {
                             element[key],
                             msg,
                             element,
-                            { parseMultMsg }
+                            { parseMultMsg, disableGetUrl, quick_reply }
                         );
                         if (key === 'faceElement' && !parsedElement) {
                             return null;
@@ -1178,12 +1231,12 @@ export class OneBotMsgApi {
             let url = '';
             if (mixElement?.picElement && rawMessage) {
                 const tempData =
-                    await this.obContext.apis.MsgApi.rawToOb11Converters.picElement?.(mixElement?.picElement, rawMessage, mixElement, { parseMultMsg: false }) as OB11MessageImage | undefined;
+                    await this.obContext.apis.MsgApi.rawToOb11Converters.picElement?.(mixElement?.picElement, rawMessage, mixElement, { parseMultMsg: false, disableGetUrl: false, quick_reply: false }) as OB11MessageImage | undefined;
                 url = tempData?.data.url ?? '';
             }
             if (mixElement?.videoElement && rawMessage) {
                 const tempData =
-                    await this.obContext.apis.MsgApi.rawToOb11Converters.videoElement?.(mixElement?.videoElement, rawMessage, mixElement, { parseMultMsg: false }) as OB11MessageVideo | undefined;
+                    await this.obContext.apis.MsgApi.rawToOb11Converters.videoElement?.(mixElement?.videoElement, rawMessage, mixElement, { parseMultMsg: false, disableGetUrl: false, quick_reply: false }) as OB11MessageVideo | undefined;
                 url = tempData?.data.url ?? '';
             }
             return url !== '' ? url : await this.core.apis.FileApi.downloadMedia(msgId, peer.chatType, peer.peerUid, elementId, '', '');
@@ -1209,7 +1262,6 @@ export class OneBotMsgApi {
     async waitGroupNotify(groupUin: string, memberUid?: string, operatorUid?: string) {
         const groupRole = this.core.apis.GroupApi.groupMemberCache.get(groupUin)?.get(this.core.selfInfo.uid.toString())?.role;
         const isAdminOrOwner = groupRole === 3 || groupRole === 4;
-
         if (isAdminOrOwner && !operatorUid) {
             let dataNotify: GroupNotify | undefined;
             await this.core.eventWrapper.registerListen('NodeIKernelGroupListener/onGroupNotifiesUpdated',
@@ -1239,7 +1291,7 @@ export class OneBotMsgApi {
             const operatorUid = await this.waitGroupNotify(
                 groupChange.groupUin.toString(),
                 groupChange.memberUid,
-                groupChange.operatorInfo ? Buffer.from(groupChange.operatorInfo).toString() : ''
+                groupChange.operatorInfo ? new TextDecoder('utf-8').decode(groupChange.operatorInfo) : undefined
             );
             return new OB11GroupIncreaseEvent(
                 this.core,
@@ -1251,13 +1303,42 @@ export class OneBotMsgApi {
 
         } else if (SysMessage.contentHead.type == 34 && SysMessage.body?.msgContent) {
             const groupChange = new NapProtoMsg(GroupChange).decode(SysMessage.body.msgContent);
-            // 自身被踢出时operatorInfo会是一个protobuf 否则大多数情况为一个string
+
+            let operator_uid_parse: string | undefined = undefined;
+            if (groupChange.operatorInfo) {
+                // 先判断是否可能是protobuf（自身被踢出或以0a开头）
+                if (groupChange.decreaseType === 3 || Buffer.from(groupChange.operatorInfo).toString('hex').startsWith('0a')) {
+                    // 可能是protobuf，尝试解析
+                    try {
+                        operator_uid_parse = new NapProtoMsg(GroupChangeInfo).decode(groupChange.operatorInfo).operator?.operatorUid;
+                    } catch (error) {
+                        // protobuf解析失败，fallback到字符串解析
+                        try {
+                            const decoded = new TextDecoder('utf-8').decode(groupChange.operatorInfo);
+                            // 检查是否包含非ASCII字符，如果包含则丢弃
+                            const isAsciiOnly = [...decoded].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) <= 126);
+                            operator_uid_parse = isAsciiOnly ? decoded : '';
+                        } catch (e2) {
+                            operator_uid_parse = '';
+                        }
+                    }
+                } else {
+                    // 直接进行字符串解析
+                    try {
+                        const decoded = new TextDecoder('utf-8').decode(groupChange.operatorInfo);
+                        // 检查是否包含非ASCII字符，如果包含则丢弃
+                        const isAsciiOnly = [...decoded].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) <= 126);
+                        operator_uid_parse = isAsciiOnly ? decoded : '';
+                    } catch (e) {
+                        operator_uid_parse = '';
+                    }
+                }
+            }
+
             const operatorUid = await this.waitGroupNotify(
                 groupChange.groupUin.toString(),
                 groupChange.memberUid,
-                groupChange.decreaseType === 3 && groupChange.operatorInfo ?
-                    new NapProtoMsg(GroupChangeInfo).decode(groupChange.operatorInfo).operator?.operatorUid :
-                    groupChange.operatorInfo?.toString()
+                operator_uid_parse
             );
             if (groupChange.memberUid === this.core.selfInfo.uid) {
                 setTimeout(() => {
